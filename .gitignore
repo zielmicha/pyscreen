@@ -1,1 +1,3 @@
 /pty-helper
+*.pyc
+*~

@@ -1,5 +1,4 @@
 #!/usr/bin/python
-import pygame
 import subprocess
 import sys
 import select
@@ -7,8 +6,6 @@ import os
 import time
 import StringIO
 import codecs
-
-pygame_reverse = dict( (v, k) for k, v in pygame.__dict__.items() if k.startswith('K_') )
 
 class Terminal:
     def __init__(self):
@@ -21,24 +18,10 @@ class Terminal:
         self.char_w = self.char_h * 14 // 20
         self.screen = Screen(self.rows, self.cols, self.write)
 
-        self.is_alt = False
-        self.is_ctrl = False
-        self.is_shift = False
-
     def main(self, args, ptyhelper='./pty-helper'):
         self.init_subprocess(args, ptyhelper)
-        self.init_graphics()
-        self.init_window()
         while True:
             self.tick()
-
-    def init_graphics(self):
-        pygame.init()
-        pygame.key.set_repeat(100, 50)
-        self.font = pygame.font.Font('FreeMono.ttf', self.char_h - 1)
-
-    def init_window(self):
-        self.surf = pygame.display.set_mode((self.cols * self.char_w, self.rows * self.char_h))
 
     def init_subprocess(self, args, ptyhelper):
         os.environ['COLS'] = str(self.cols)
@@ -53,7 +36,6 @@ class Terminal:
     def tick(self):
         self.tick_stream()
         self.tick_term()
-        self.tick_window()
 
     def tick_stream(self):
         start = time.time()
@@ -86,118 +68,7 @@ class Terminal:
         if self.in_buff:
             self.in_buff = self.screen.add(self.in_buff)
 
-    def tick_window(self):
-        #self.screen.lines_updated
-        if len(self.screen.lines_updated) > 5:
-            print 'many lines updated'
-        for y in self.screen.lines_updated:
-            row = self.screen._data[y]
-            for x, char in enumerate(row):
-                bg_color = get_color(char.bg)
-                surf = self.font.render(char.ch, True,
-                                        get_color(char.fg, char.bold),
-                                        bg_color)
-                self.surf.fill(bg_color, (self.char_w * x, self.char_h * y, self.char_w, self.char_h))
-                self.surf.blit(surf, (self.char_w * x, self.char_h * y))
-
-        self.screen.lines_updated = set([self.screen.y])
-
-        cursor_color = self.screen._data[self.screen.y][self.screen.x].fg
-
-        pygame.draw.rect(self.surf,
-                         get_color(cursor_color),
-                         (self.char_w * self.screen.x, self.char_h * self.screen.y,
-                          self.char_w, self.char_h),
-                         1)
-
-        for ev in pygame.event.get():
-            if ev.type == pygame.KEYDOWN:
-                self.handle_modifier(ev.key, True)
-                self.handle_key(ev)
-            elif ev.type == pygame.KEYUP:
-                self.handle_modifier(ev.key, False)
-        pygame.display.flip()
-
-    def handle_key(self, ev):
-        if self.screen.get_key_code_mode:
-            self.write('%d %s\n' % (ev.key, pygame_reverse.get(ev.key, 'unknown')))
-            self.screen.get_key_code_mode = False
-            return
-
-        ALPHA = 'abcdefghijklmnopqrstuwvwxyz'
-        ALPHA_MAPPING = dict( (getattr(pygame, 'K_' + v), v) for v in ALPHA )
-        NUMBERS  = '1234567890'
-        NUMBERS_MAPPING = dict( (getattr(pygame, 'K_' + v), v) for v in NUMBERS )
-        NUMSHIFT = '!@#$%^&*()'
-        e = '\x1b'
-        app = 'O' if self.screen.app_mode else '['
-        MAPPING = {pygame.K_BACKSPACE: '\x7f',
-                   pygame.K_RETURN: '\r',
-                   pygame.K_UP: e + app + 'A',
-                   pygame.K_DOWN: e + app + 'B',
-                   pygame.K_RIGHT: e + app + 'C',
-                   pygame.K_LEFT: e + app + 'D',
-                   pygame.K_PAGEUP: e + '[5~',
-                   pygame.K_PAGEDOWN: e + '[6~',
-                   pygame.K_END: e + 'OF',
-                   pygame.K_HOME: e + 'OH',
-                   pygame.K_TAB: '\t',
-                   pygame.K_SPACE: ' ',
-                   pygame.K_SLASH: ('/', '?'),
-                   pygame.K_BACKSLASH: ('\\', '|'),
-                   pygame.K_PERIOD: ('.', '>'),
-                   pygame.K_COMMA: (',', '<'),
-                   pygame.K_KP_MINUS: ('-', '_'),
-                   pygame.K_MINUS: ('-', '_'),
-                   pygame.K_EQUALS: ('=', '+'),
-                   pygame.K_SEMICOLON: (';', ':'),
-                   pygame.K_QUOTE: ('\'', '"'),
-                   pygame.K_LEFTBRACKET: ('[', '{'),
-                   pygame.K_RIGHTBRACKET: (']', '}'),
-                   }
-
-        if ev.key in ALPHA_MAPPING:
-            ch = ALPHA_MAPPING[ev.key]
-
-            if self.is_ctrl:
-                self.write(chr(ord(ch) - 0x60))
-            elif self.is_shift:
-                self.write(ch.upper())
-            elif self.is_alt:
-                self.write('\x1b' + ch)
-            else:
-                self.write(ch)
-
-        elif ev.key in NUMBERS_MAPPING:
-            ch = NUMBERS_MAPPING[ev.key]
-            if self.is_shift:
-                self.write(NUMSHIFT[NUMBERS.index(ch)])
-            else:
-                self.write(ch)
-
-        elif ev.key in MAPPING:
-            thing = MAPPING[ev.key]
-            if type(thing) == tuple:
-                ch = thing[1] if self.is_shift else thing[0]
-            else:
-                ch = thing
-            self.write(ch)
-
-        #elif ev.unicode:
-        #    self.write(ev.unicode.encode('utf8'))
-
-    def handle_modifier(self, keycode, state):
-        if keycode in (pygame.K_RALT, pygame.K_LALT):
-            self.is_alt = state
-        elif keycode in (pygame.K_RCTRL, pygame.K_LCTRL):
-            self.is_ctrl = state
-        elif keycode in (pygame.K_RSHIFT, pygame.K_LSHIFT):
-            self.is_shift = state
-        else:
-            return
-
     def write(self, w):
-        print time.time(), 'send', repr(w)
         self.out_buff += w
 
 class Screen:
@@ -226,7 +97,7 @@ class Screen:
                     self._handle(reader)
                 except ValueError as err:
                     print >>sys.stderr, err
-                print time.time(), 'put', repr(reader.s[reader._breakpoint:reader.i])
+#                print time.time(), 'put', repr(reader.s[reader._breakpoint:reader.i])
                 reader.put_breakpoint()
         except StopIteration:
             pass
@@ -608,7 +479,3 @@ class Character:
         self.bg = ch.bg
         self.fg = ch.fg
         self.bold = ch.bold
-
-if __name__ == '__main__':
-    t = Terminal()
-    t.main(sys.argv[1:])
